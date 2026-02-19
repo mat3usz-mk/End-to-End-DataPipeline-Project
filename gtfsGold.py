@@ -1,12 +1,23 @@
 from pyspark.sql import Window
 from pyspark.sql import functions as F
+from dotenv import load_dotenv
+import os
+
+load_dotenv()
+
 
 class GTFSGold:
     def __init__(self, spark_session):
         self.spark = spark_session
         # Parametry biznesowe 💸
-        self.FUEL_CONSUMPTION_L_PER_100KM = 30.0
-        self.FUEL_PRICE_PLN_PER_L = 6.50
+        self.FUEL_CONSUMPTION_L_PER_100KM = float(os.environ['FUEL_CONSUMPTION'])
+        self.FUEL_PRICE_PLN_PER_L = float(os.environ['FUEL_PRICE'])
+
+    def check_data_quality(self, df):
+        """Sprawdza, czy w danych nie ma wartości null w kluczowych kolumnach"""
+        null_count = df.filter(F.col("Lines").isNull() | F.col("VehicleNumber").isNull()).count()
+        if null_count > 0:
+            print(f"Ostrzeżenie: Znaleziono {null_count} niekompletnych rekordów!")
 
     def _haversine_distance(self, lat1, lon1, lat2, lon2):
         """Oblicza dystans w km między dwoma punktami GPS"""
@@ -21,7 +32,7 @@ class GTFSGold:
         c = 2 * F.atan2(F.sqrt(a), F.sqrt(1 - a))
         return R * c
 
-    def create_daily_report(self, df_silver):
+    def _enrich_with_metrics(self,df_silver):
         window_spec = Window.partitionBy("VehicleNumber").orderBy("Time")
 
 
@@ -68,7 +79,14 @@ class GTFSGold:
                             ).otherwise(0.0)
                         )
         )
+        enriched_df = enriched_df.select('*').filter(F.col("speed_kmh") <=70)
 
+        return enriched_df
+
+
+
+    def create_daily_report(self, df_silver):
+        enriched_df = self._enrich_with_metrics(df_silver=df_silver)
 
         # 4. Agregacja końcowa po liniach
         final_report = enriched_df.groupBy("Lines").agg(
@@ -77,9 +95,40 @@ class GTFSGold:
             F.max("dist_km").alias("max_segment_km"), 
             F.count("VehicleNumber").alias("data_points_count"),
             F.avg("speed_kmh").alias("avg_speed"),
-            F.max("speed_kmh").alias("max_recorded_speed")
+            F.max("speed_kmh").alias("max_recorded_speed"),
+            F.countDistinct("VehicleNumber").alias("unique_vehicles_count"),
+            (F.sum("dist_km") / F.countDistinct("VehicleNumber")).alias("avg_dist_per_vehicle")
         ).orderBy(F.desc("total_cost_pln")).withColumn(
             "cost_of_1km", F.col("total_cost_pln")/ F.col("total_distance_km")
         )
         
+
         return final_report
+    
+    def most_exp_line(self, final_report, df_silver):
+        # 1. Pobieramy numer najdroższej linii (pierwszy wiersz po sortowaniu)
+        most_expensive_line = final_report.orderBy(F.desc("total_cost_pln")).first()["Lines"]
+
+        # 2. Automatycznie filtrujemy dane Silver dla tej konkretnej linii
+        detailed_silver_df = df_silver.filter(F.col("Lines") == most_expensive_line)
+
+        # 3. Tworzymy tabelę analityczną (np. prędkość i dystans w czasie)
+        # Tutaj możemy użyć Window Functions, o których rozmawialiśmy
+        analysis_table = self._enrich_with_metrics(df_silver=detailed_silver_df)
+        top_vehicle_number = (
+            analysis_table
+            .groupBy("VehicleNumber")
+            .agg(F.sum("dist_km").alias("total_v_dist"))
+            .orderBy(F.desc("total_v_dist"))
+            .first()["VehicleNumber"]
+        )
+
+
+        top_vehicle_t = (
+            analysis_table
+            .filter(F.col("VehicleNumber")==top_vehicle_number)
+
+        )
+        return analysis_table, top_vehicle_t
+    
+

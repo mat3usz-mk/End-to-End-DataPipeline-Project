@@ -1,6 +1,6 @@
 from pyspark.sql import SparkSession
 from pyspark.sql import functions as F
-from pyspark.sql.types import StructType, StructField, StringType, DoubleType
+from pyspark.sql.types import StructType, StructField, StringType, DoubleType, ArrayType
 import glob
 
 class GTFSTransformer:
@@ -9,9 +9,22 @@ class GTFSTransformer:
 
     def read_bronze(self, path):
         path = glob.glob(path)
-        return self.spark.read.option("multiline", "true").json(path)
+        bus_schema =( StructType([
+            StructField("Lines", StringType(), True),
+            StructField("VehicleNumber", StringType(), True),
+            StructField("Lat", DoubleType(), True),
+            StructField("Lon", DoubleType(), True),
+            StructField("Time", StringType(), True)
+        ]))
+        # Główny schemat pliku
+        root_schema = StructType([
+            StructField("result", ArrayType(bus_schema), True)
+        ])
 
-    def transform(self, df):
+        # Użycie w read_bronze
+        return self.spark.read.option("multiline", "true").schema(root_schema).json(path)
+
+    def transform(self, df,current_date):
         df_exploded = df.select(F.explode("result").alias("v"))
 
         final_df = (
@@ -26,7 +39,7 @@ class GTFSTransformer:
             )
             .dropna(how='any')
             .filter((F.col("Lat").between(52.0, 52.4)) & (F.col("Lon").between(20.5, 21.5)))
-            .filter(F.col('date') == F.current_date()) 
+            .filter(F.col('date') == current_date) 
             .dropDuplicates(['VehicleNumber', 'Time'])
             .orderBy(F.col('Lines'), F.col('VehicleNumber'),F.col('Time'))
         )
