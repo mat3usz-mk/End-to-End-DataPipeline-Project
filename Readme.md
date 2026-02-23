@@ -10,10 +10,10 @@ oraz analizę prędkości dla każdej linii autobusowej.
 ## 📊 Przykładowe wyniki
 
 ### Top 10 najdroższych linii autobusowych (szacowany koszt paliwa)
-![Top 10 linii](docs/images/Figure_1.jpg)
+![Top 10 linii](docs/images/Figure_1.png)
 
 ### Prędkość autobusu z największym kosztem paliwa (linia 189, pojazd #8349)
-![Prędkość w czasie](docs/images/Figure_2.jpg)
+![Prędkość w czasie](docs/images/Figure_2.png)
 
 ---
 
